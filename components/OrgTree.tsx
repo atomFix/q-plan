@@ -61,7 +61,7 @@ const OrgNode: React.FC<{
     <div className="select-none">
       <div
         className={`flex items-center py-2 px-3 cursor-pointer transition-all rounded-lg relative card-hover ${
-          isSelected ? 'bg-blue-600 text-white' : 'text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700/50'
+          isSelected ? 'bg-gradient-to-r from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-500/25' : 'text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700/50'
         }`}
         style={{
           paddingLeft: `${depth * 12 + 12}px`,

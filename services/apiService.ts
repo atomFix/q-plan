@@ -15,7 +15,7 @@ interface RelationCacheItem {
     data: RelationResponse;
 }
 
-export const fetchRelation = async (path: string, forceRefresh: boolean = false): Promise<RelationResponse> => {
+export const fetchRelation = async (path: string, forceRefresh: boolean = false, abortSignal?: AbortSignal): Promise<RelationResponse> => {
     const cacheKey = `qodin_rel_cache_${path}`;
     const now = new Date();
     const nowTime = now.getTime();
@@ -45,7 +45,7 @@ export const fetchRelation = async (path: string, forceRefresh: boolean = false)
 
     try {
         const apiUrl = `/qodin/api/relation/getRelation?path=${encodeURIComponent(path)}`;
-        const fetchResponse = await fetch(apiUrl);
+        const fetchResponse = await fetch(apiUrl, { signal: abortSignal });
 
         if (!fetchResponse.ok) {
             throw new Error(`Relation API request failed: ${fetchResponse.status}`);
@@ -72,13 +72,18 @@ export const fetchRelation = async (path: string, forceRefresh: boolean = false)
         }
 
         return data;
-    } catch (error) {
+    } catch (error: any) {
+        // If request was aborted, don't log as error
+        if (error.name === 'AbortError') {
+            console.log(`[API] Relation request aborted for ${path}`);
+            throw error;
+        }
         console.error(`[API] Failed to fetch relation for ${path}:`, error);
         throw error;
     }
 };
 
-export const fetchPlan = async (path: string, forceRefresh: boolean = false): Promise<PlanResponse> => {
+export const fetchPlan = async (path: string, forceRefresh: boolean = false, abortSignal?: AbortSignal): Promise<PlanResponse> => {
     const cacheKey = `${CACHE_PREFIX}${path}`;
     const now = new Date();
     const nowTime = now.getTime();
@@ -123,7 +128,7 @@ export const fetchPlan = async (path: string, forceRefresh: boolean = false): Pr
     try {
         // Build API URL with path parameter (using proxy)
         const apiUrl = `/qodin/api/issue/getPlan?param=${encodeURIComponent(path)}&typew=&parent=1,2`;
-        const fetchResponse = await fetch(apiUrl);
+        const fetchResponse = await fetch(apiUrl, { signal: abortSignal });
 
         if (!fetchResponse.ok) {
             throw new Error(`API request failed: ${fetchResponse.status}`);
@@ -190,7 +195,12 @@ export const fetchPlan = async (path: string, forceRefresh: boolean = false): Pr
         }
 
         return planResponse;
-    } catch (error) {
+    } catch (error: any) {
+        // If request was aborted, don't log as error
+        if (error.name === 'AbortError') {
+            console.log(`[API] Plan request aborted for ${path}`);
+            throw error;
+        }
         console.error(`[API] Failed to fetch plan for ${path}:`, error);
         throw error;
     }

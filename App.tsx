@@ -115,6 +115,10 @@ function App() {
   const calendarButtonRef = useRef<HTMLButtonElement>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
 
+  // Refs for abort controllers to cancel pending requests
+  const planAbortControllerRef = useRef<AbortController | null>(null);
+  const relationAbortControllerRef = useRef<AbortController | null>(null);
+
   // State for portal positioning
   const [calendarPosition, setCalendarPosition] = useState<{top: number; left: number} | null>(null);
   const [filterPosition, setFilterPosition] = useState<{top: number; left: number} | null>(null);
@@ -180,11 +184,21 @@ function App() {
     }
 
     const init = async () => {
+      // Create abort controller for initial request
+      const abortController = new AbortController();
+      relationAbortControllerRef.current = abortController;
+
       try {
-        const relData = await fetchRelation('技术中心', false);
-        setRelation(relData);
-      } catch (e) {
-        console.error("Failed to load org tree", e);
+        const relData = await fetchRelation('技术中心', false, abortController.signal);
+        // Only update state if this request wasn't aborted
+        if (!abortController.signal.aborted) {
+          setRelation(relData);
+        }
+      } catch (e: any) {
+        // Ignore abort errors
+        if (e.name !== 'AbortError') {
+          console.error("Failed to load org tree", e);
+        }
       }
     };
     init();
@@ -249,18 +263,48 @@ function App() {
       return () => window.removeEventListener('click', handleClick);
   }, [contextMenu]);
 
+  // 5. Cleanup on unmount - cancel any pending requests
+  useEffect(() => {
+    return () => {
+      if (planAbortControllerRef.current) {
+        planAbortControllerRef.current.abort();
+      }
+      if (relationAbortControllerRef.current) {
+        relationAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   const loadPlanData = async (forceRefresh: boolean = false) => {
+    // Cancel any pending request
+    if (planAbortControllerRef.current) {
+      planAbortControllerRef.current.abort();
+    }
+
+    // Create new abort controller for this request
+    const abortController = new AbortController();
+    planAbortControllerRef.current = abortController;
+
     if (!planData) {
         setLoading(true);
     }
     try {
-      const data = await fetchPlan(selectedPath, forceRefresh);
-      setPlanData(data);
-    } catch (e) {
-      console.error("Failed to load plan", e);
+      const data = await fetchPlan(selectedPath, forceRefresh, abortController.signal);
+      // Only update state if this request wasn't aborted
+      if (!abortController.signal.aborted) {
+        setPlanData(data);
+      }
+    } catch (e: any) {
+      // Ignore abort errors - they're expected when switching teams quickly
+      if (e.name !== 'AbortError') {
+        console.error("Failed to load plan", e);
+      }
     }
-    setLoading(false);
-    setSwitchingTeam(false);
+    // Only clear loading state if this wasn't aborted
+    if (!abortController.signal.aborted) {
+      setLoading(false);
+      setSwitchingTeam(false);
+    }
   };
 
   const handleRefresh = async () => {
@@ -270,14 +314,32 @@ function App() {
   };
 
   const handleRefreshRelation = async () => {
+      // Cancel any pending request
+      if (relationAbortControllerRef.current) {
+        relationAbortControllerRef.current.abort();
+      }
+
+      // Create new abort controller for this request
+      const abortController = new AbortController();
+      relationAbortControllerRef.current = abortController;
+
       setRefreshingRelation(true);
       try {
-          const relData = await fetchRelation('技术中心', true);
-          setRelation(relData);
-      } catch (e) {
-          console.error("Failed to refresh org tree", e);
+          const relData = await fetchRelation('技术中心', true, abortController.signal);
+          // Only update state if this request wasn't aborted
+          if (!abortController.signal.aborted) {
+            setRelation(relData);
+          }
+      } catch (e: any) {
+          // Ignore abort errors
+          if (e.name !== 'AbortError') {
+            console.error("Failed to refresh org tree", e);
+          }
       }
-      setRefreshingRelation(false);
+      // Only clear loading state if this wasn't aborted
+      if (!abortController.signal.aborted) {
+        setRefreshingRelation(false);
+      }
   };
 
   const handleBackToToday = () => {
@@ -592,14 +654,14 @@ function App() {
         `}
       >
         <div className="h-16 border-b flex items-center px-5 font-bold flex-shrink-0 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100">
-            <div className="w-9 h-9 rounded-lg bg-blue-500 flex items-center justify-center mr-3">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center mr-3 shadow-lg shadow-violet-500/25">
                 <Layout className="text-white" size={18} />
             </div>
             <span className="truncate text-lg font-bold tracking-tight">Q-Plan</span>
             <button
                 onClick={handleRefreshRelation}
                 disabled={refreshingRelation}
-                className={`ml-auto p-2 rounded-xl transition-all mr-1 ${refreshingRelation ? 'animate-spin text-blue-500' : ''} text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700`}
+                className={`ml-auto p-2 rounded-xl transition-all mr-1 ${refreshingRelation ? 'animate-spin text-violet-500' : ''} text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700`}
                 title="刷新组织架构"
             >
                 <RefreshCw size={16} />
@@ -632,16 +694,16 @@ function App() {
         </div>
 
         {myRtxId && (
-            <div className="p-4 mx-3 mb-3 rounded-xl border flex items-center gap-3 transition-all hover:shadow-md bg-slate-100 dark:bg-slate-700 border-slate-200 dark:border-slate-700"
+            <div className="p-4 mx-3 mb-3 rounded-xl border flex items-center gap-3 transition-all hover:shadow-md bg-slate-100 dark:bg-slate-700 border-slate-200 dark:border-slate-700 hover:shadow-lg hover:shadow-violet-500/5 cursor-pointer"
             >
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-900/50 dark:to-indigo-900/50 flex items-center justify-center text-blue-600 dark:text-blue-300 text-sm font-bold border border-slate-300 dark:border-slate-600 shadow-sm">
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-100 to-violet-200 dark:from-violet-900/50 dark:to-violet-800/50 flex items-center justify-center text-violet-700 dark:text-violet-300 text-sm font-bold border border-violet-200 dark:border-violet-700 shadow-sm">
                     {myRtxId.slice(0, 1).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                     <div className="text-[10px] opacity-60 font-bold uppercase tracking-widest">User</div>
                     <div className="text-sm font-semibold truncate text-slate-900 dark:text-slate-100">{myRtxId}</div>
                 </div>
-                <button onClick={clearMe} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                <button onClick={clearMe} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors">
                     <MoreHorizontal size={16} className="opacity-50" />
                 </button>
             </div>
@@ -661,7 +723,7 @@ function App() {
             <div className="flex items-center gap-3 w-full lg:w-auto">
                 <button
                     onClick={() => setSidebarOpen(!sidebarOpen)}
-                    className="p-2 rounded-xl transition-all flex-shrink-0 shadow-sm border text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                    className="p-2 rounded-xl transition-all flex-shrink-0 shadow-sm border text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none"
                 >
                     {sidebarOpen ? <ChevronLeft size={20} className="hidden lg:block"/> : <ChevronRight size={20} className="hidden lg:block" />}
                      <div className="lg:hidden"><Layout size={20}/></div>
@@ -680,7 +742,7 @@ function App() {
                 <button
                     onClick={handleRefresh}
                     disabled={refreshing}
-                    className={`p-2 rounded-full transition-all hover:rotate-180 duration-500 flex-shrink-0 ${refreshing ? 'animate-spin text-blue-500' : ''} text-slate-500 dark:text-slate-400`}
+                    className={`p-2 rounded-full transition-all hover:rotate-180 duration-500 flex-shrink-0 ${refreshing ? 'animate-spin text-violet-500' : ''} text-slate-500 dark:text-slate-400`}
                  >
                      <RefreshCw size={18} />
                  </button>
@@ -688,23 +750,23 @@ function App() {
 
             {/* Middle Row/Section: Date Controls */}
             <div className="w-full lg:w-auto flex items-center justify-center gap-2 order-3 lg:order-2 lg:absolute lg:left-1/2 lg:-translate-x-1/2">
-                <div className="flex items-center p-1 rounded-xl border shadow-sm backdrop-blur-md w-full sm:w-auto justify-between sm:justify-start bg-white/40 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700"
+                <div className="flex items-center p-1.5 rounded-xl border shadow-sm backdrop-blur-md w-full sm:w-auto justify-between sm:justify-start bg-white/60 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700"
                 >
                     <button
                         onClick={handleBackToToday}
-                        className="px-3 lg:px-4 py-1.5 text-xs font-bold rounded-lg transition-all shadow-sm text-slate-900 dark:text-slate-100 bg-transparent"
+                        className="px-3 lg:px-4 py-1.5 text-xs font-bold rounded-lg transition-all shadow-sm text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none"
                     >
                         Today
                     </button>
                     <div className="w-[1px] h-4 bg-slate-400/20 mx-1 lg:mx-2"></div>
-                    <button onClick={() => shiftDate('prev')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                    <button onClick={() => shiftDate('prev')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none">
                         <ChevronLeft size={16} />
                     </button>
                     <div className="flex-1 sm:flex-none flex justify-center">
                         <button
                             ref={calendarButtonRef}
                             onClick={() => setIsCalendarOpen(!isCalendarOpen)}
-                            className="flex items-center gap-2 px-2 lg:px-4 py-1 text-sm font-semibold text-slate-900 dark:text-slate-100"
+                            className="flex items-center gap-2 px-2 lg:px-4 py-1 text-sm font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none"
                         >
                             <span>{centerDate}</span>
                         </button>
@@ -742,7 +804,7 @@ function App() {
                                                     onClick={() => setRangeOffset(opt.value)}
                                                     className={`px-1 py-2 text-xs font-medium rounded-lg border transition-all text-center shadow-sm ${
                                                         rangeOffset === opt.value
-                                                            ? 'bg-gradient-to-r from-blue-500 to-indigo-600 border-blue-600 text-white shadow-lg shadow-blue-500/25'
+                                                            ? 'bg-gradient-to-r from-violet-500 to-violet-600 border-violet-600 text-white shadow-lg shadow-violet-500/25'
                                                             : 'bg-slate-100 dark:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-600'
                                                     }`}
                                                 >
@@ -755,7 +817,7 @@ function App() {
                                          <span className="text-sm font-medium">Show Weekends</span>
                                          <button
                                             onClick={() => setShowWeekends(!showWeekends)}
-                                            className={`w-11 h-6 flex items-center rounded-full p-1 transition-all ${showWeekends ? 'bg-gradient-to-r from-blue-500 to-indigo-600' : 'bg-slate-300 dark:bg-slate-600'}`}
+                                            className={`w-11 h-6 flex items-center rounded-full p-1 transition-all ${showWeekends ? 'bg-gradient-to-r from-violet-500 to-violet-600 shadow-lg shadow-violet-500/25' : 'bg-slate-300 dark:bg-slate-600'}`}
                                          >
                                             <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${showWeekends ? 'translate-x-5' : 'translate-x-0'}`} />
                                          </button>
@@ -765,7 +827,7 @@ function App() {
                             document.body
                         )}
                     </div>
-                    <button onClick={() => shiftDate('next')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                    <button onClick={() => shiftDate('next')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none">
                         <ChevronRight size={16} />
                     </button>
                 </div>
@@ -778,7 +840,7 @@ function App() {
                 {/* Theme Toggle */}
                 <button
                     onClick={() => setDarkMode(!darkMode)}
-                    className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                    className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none"
                     title="Toggle dark mode"
                 >
                     {darkMode ? <Sun size={18} /> : <Moon size={18} />}
@@ -789,7 +851,7 @@ function App() {
                     <input
                         type="text"
                         placeholder="Search..."
-                        className="pl-9 pr-4 py-2 rounded-xl text-sm w-full transition-all border outline-none focus:ring-2 focus:ring-blue-500/30 backdrop-blur-sm bg-slate-100/50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400"
+                        className="pl-9 pr-4 py-2 rounded-xl text-sm w-full transition-all border outline-none focus:ring-2 focus:ring-violet-500/50 backdrop-blur-sm bg-slate-100/50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400"
                         value={filterText}
                         onChange={(e) => setFilterText(e.target.value)}
                     />
@@ -798,8 +860,8 @@ function App() {
                 {myRtxId && (
                     <button
                         onClick={handleToggleMe}
-                        className={`flex items-center justify-center w-10 lg:w-auto lg:px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm ${
-                            onlyMe ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                        className={`flex items-center justify-center w-10 lg:w-auto lg:px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none ${
+                            onlyMe ? 'bg-gradient-to-r from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-500/25' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
                         }`}
                     >
                         <User size={16} />
@@ -811,13 +873,13 @@ function App() {
                     <button
                         ref={filterButtonRef}
                         onClick={() => setIsFilterOpen(!isFilterOpen)}
-                        className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm ${
-                            (isFilterOpen || activeFilterCount > 0) ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                        className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:outline-none ${
+                            (isFilterOpen || activeFilterCount > 0) ? 'bg-gradient-to-r from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-500/25' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
                         }`}
                     >
                         <Filter size={16} />
                         <span className="hidden lg:inline">Filter</span>
-                        {activeFilterCount > 0 && <span className="bg-white text-blue-600 rounded-full w-4 h-4 flex items-center justify-center text-[9px] font-extrabold lg:absolute lg:-top-1 lg:-right-1 lg:static">{activeFilterCount}</span>}
+                        {activeFilterCount > 0 && <span className="bg-white text-violet-600 rounded-full w-4 h-4 flex items-center justify-center text-[9px] font-extrabold lg:absolute lg:-top-1 lg:-right-1 lg:static shadow-sm">{activeFilterCount}</span>}
                     </button>
                     {isFilterOpen && filterPosition && createPortal(
                          <div className="fixed w-72 lg:w-80 rounded-2xl shadow-2xl border z-[150] overflow-hidden animate-in fade-in zoom-in-95 duration-150 backdrop-blur-xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 border-slate-200 dark:border-slate-700"
@@ -825,14 +887,14 @@ function App() {
                          >
                             <div className="p-4 border-b flex justify-between items-center border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-white dark:from-slate-700/50 dark:to-slate-800/50">
                                 <span className="text-xs font-display font-bold uppercase tracking-widest opacity-60">Filter Tasks</span>
-                                <button onClick={clearFilters} className="text-xs font-semibold text-blue-500 hover:underline transition-opacity hover:opacity-80">Reset All</button>
+                                <button onClick={clearFilters} className="text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline transition-opacity hover:opacity-80">Reset All</button>
                             </div>
                             <div className="p-5 flex flex-col sm:flex-row gap-6">
                                 <div className="flex-1">
                                     <div className="text-xs font-bold opacity-60 mb-3 uppercase tracking-widest">Priority</div>
                                     {PRIORITIES.map(p => (
                                         <div key={p} onClick={() => toggleFilter(priorityFilters, p, setPriorityFilters)} className="flex items-center gap-3 mb-1.5 cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-all card-hover">
-                                            <div className={`w-4 h-4 rounded shadow-sm border flex items-center justify-center transition-all ${priorityFilters.includes(p) ? 'bg-gradient-to-br from-blue-500 to-indigo-600 border-blue-500' : 'border-slate-400 bg-transparent'}`}>
+                                            <div className={`w-4 h-4 rounded shadow-sm border flex items-center justify-center transition-all ${priorityFilters.includes(p) ? 'bg-gradient-to-br from-violet-500 to-violet-600 border-violet-500 shadow-md shadow-violet-500/20' : 'border-slate-400 bg-transparent'}`}>
                                                 {priorityFilters.includes(p) && <div className="w-2 h-2 bg-white rounded-[1px]" />}
                                             </div>
                                             <span className="text-sm font-medium">{p}</span>
@@ -844,7 +906,7 @@ function App() {
                                     <div className="text-xs font-bold opacity-60 mb-3 uppercase tracking-widest">Status</div>
                                     {STATUSES.map(s => (
                                         <div key={s} onClick={() => toggleFilter(statusFilters, s, setStatusFilters)} className="flex items-center gap-3 mb-1.5 cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-all card-hover">
-                                            <div className={`w-4 h-4 rounded shadow-sm border flex items-center justify-center transition-all ${statusFilters.includes(s) ? 'bg-gradient-to-br from-blue-500 to-indigo-600 border-blue-500' : 'border-slate-400 bg-transparent'}`}>
+                                            <div className={`w-4 h-4 rounded shadow-sm border flex items-center justify-center transition-all ${statusFilters.includes(s) ? 'bg-gradient-to-br from-violet-500 to-violet-600 border-violet-500 shadow-md shadow-violet-500/20' : 'border-slate-400 bg-transparent'}`}>
                                                 {statusFilters.includes(s) && <div className="w-2 h-2 bg-white rounded-[1px]" />}
                                             </div>
                                             <span className="text-sm font-medium truncate">{s}</span>
@@ -875,8 +937,8 @@ function App() {
                 <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm z-40 animate-in fade-in duration-300">
                     <div className="text-center">
                         <div className="relative mb-4">
-                            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 blur-xl opacity-20 animate-pulse"></div>
-                            <Loader2 className="relative animate-spin text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 mx-auto" size={48} />
+                            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-violet-500 to-violet-600 blur-xl opacity-20 animate-pulse"></div>
+                            <Loader2 className="relative animate-spin text-transparent bg-clip-text bg-gradient-to-r from-violet-500 to-violet-600 mx-auto" size={48} />
                         </div>
                         <p className="text-sm font-display font-medium text-slate-600 dark:text-slate-300 tracking-wide">切换团队中...</p>
                     </div>
@@ -886,8 +948,8 @@ function App() {
             {loading && !planData && (
                 <div className="absolute inset-0 flex items-center justify-center bg-transparent z-50">
                     <div className="relative">
-                        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 blur-xl opacity-20 animate-pulse"></div>
-                        <Loader2 className="relative animate-spin text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600" size={56} />
+                        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-violet-500 to-violet-600 blur-xl opacity-20 animate-pulse"></div>
+                        <Loader2 className="relative animate-spin text-transparent bg-clip-text bg-gradient-to-r from-violet-500 to-violet-600" size={56} />
                     </div>
                 </div>
             )}
@@ -913,7 +975,7 @@ function App() {
                         </p>
                         <button
                             onClick={() => setSidebarOpen(true)}
-                            className="px-6 py-2.5 rounded-xl font-display font-semibold transition-all hover:scale-105 active:scale-95 shadow-lg shadow-blue-500/25 bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700"
+                            className="px-6 py-2.5 rounded-xl font-display font-semibold transition-all hover:scale-105 active:scale-95 shadow-lg shadow-violet-500/25 bg-gradient-to-r from-violet-500 to-violet-600 text-white hover:from-violet-600 hover:to-violet-700"
                         >
                             打开组织架构
                         </button>
@@ -937,13 +999,13 @@ function App() {
                                         className={`border-b border-r p-3 text-center border-slate-200 dark:border-slate-700 ${
                                             date.isWeekend ? 'bg-slate-50 dark:bg-slate-900/50' : ''
                                         } ${
-                                            isToday(date.dateStr) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+                                            isToday(date.dateStr) ? 'bg-violet-50 dark:bg-violet-900/20' : ''
                                         }`}
                                     >
-                                        <div className={`text-sm font-semibold ${isToday(date.dateStr) ? 'text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                                        <div className={`text-sm font-semibold ${isToday(date.dateStr) ? 'text-violet-700 dark:text-violet-300' : 'text-slate-700 dark:text-slate-300'}`}>
                                             {date.dayName}
                                         </div>
-                                        <div className={`text-[10px] font-medium mt-0.5 ${isToday(date.dateStr) ? 'text-blue-500 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                                        <div className={`text-[10px] font-medium mt-0.5 ${isToday(date.dateStr) ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`}>
                                             {date.displayDate}
                                         </div>
                                     </th>
@@ -961,21 +1023,21 @@ function App() {
                                     const isSelf = emp.rtx_id === myRtxId;
 
                                     return (
-                                        <tr key={emp.rtx_id} className={`group${isSelf ? ' bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                                        <tr key={emp.rtx_id} className={`group${isSelf ? ' bg-violet-50 dark:bg-violet-900/20' : ''}`}
                                         >
                                             <td className={`sticky left-0 z-30 p-4 border-b border-r shadow-sm bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300${
-                                                isSelf ? ' bg-blue-50 dark:bg-blue-900/20' : ''
+                                                isSelf ? ' bg-violet-50 dark:bg-violet-900/20' : ''
                                             }`}
                                             >
                                                 <div className="flex flex-col">
                                                     <span className="font-semibold text-sm tracking-tight">{emp.name}</span>
                                                     <div className="flex items-center gap-2 mt-1.5">
                                                         {!isSelf ? (
-                                                            <button onClick={() => handleSetMe(emp.rtx_id)} className="text-[10px] opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-blue-500 font-semibold underline transition-opacity">
+                                                            <button onClick={() => handleSetMe(emp.rtx_id)} className="text-[10px] opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-violet-600 font-semibold underline transition-opacity">
                                                                 Is this you?
                                                             </button>
                                                         ) : (
-                                                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 font-semibold">YOU</span>
+                                                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300 font-semibold shadow-sm">YOU</span>
                                                         )}
                                                     </div>
                                                 </div>
@@ -992,7 +1054,7 @@ function App() {
                                                                 className={`flex-1 border-r border-slate-200 dark:border-slate-700${
                                                                     date.isWeekend ? ' bg-slate-50 dark:bg-slate-900/30' : ''
                                                                 }${
-                                                                    isToday(date.dateStr) ? ' bg-blue-50/50 dark:bg-blue-900/20' : ''
+                                                                    isToday(date.dateStr) ? ' bg-violet-50/50 dark:bg-violet-900/20' : ''
                                                                 }`}
                                                             />
                                                         ))}
