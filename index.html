@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Q-Plan Enhanced</title>
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Google Fonts: Space Grotesk for headings, Inter for body -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       /* Custom scrollbar for better density */
@@ -23,10 +28,81 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #64748b; /* Slate-500 */
       }
-      
+
       /* Corner square */
       ::-webkit-scrollbar-corner {
         background: #e2e8f0;
+      }
+
+      /* Custom Typography System */
+      :root {
+        --font-display: 'Space Grotesk', sans-serif;
+        --font-body: 'Inter', sans-serif;
+      }
+
+      body {
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* Apply display font to headings */
+      h1, h2, h3, .font-display {
+        font-family: var(--font-display);
+      }
+
+      /* Grain texture overlay for visual depth */
+      .grain-overlay::before {
+        content: '';
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+        opacity: 0.015;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+      }
+
+      /* Dark mode grain texture (more visible) */
+      .dark .grain-overlay::before {
+        opacity: 0.03;
+      }
+
+      /* Staggered animation delays */
+      .animate-delay-100 { animation-delay: 100ms; }
+      .animate-delay-200 { animation-delay: 200ms; }
+      .animate-delay-300 { animation-delay: 300ms; }
+      .animate-delay-400 { animation-delay: 400ms; }
+
+      /* Smooth transitions for all interactive elements */
+      button, a, .cursor-pointer {
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      /* Enhanced hover states for cards */
+      .card-hover {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .card-hover:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      }
+
+      /* Smooth fade-in animation */
+      @keyframes fade-in-up {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .fade-in-up {
+        animation: fade-in-up 0.5s ease-out forwards;
       }
     </style>
   <script type="importmap">
@@ -41,7 +117,8 @@
 }
 </script>
 </head>
-  <body class="bg-slate-50 text-slate-900 font-sans antialiased overflow-hidden">
+  <body class="grain-overlay bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 antialiased overflow-hidden">
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

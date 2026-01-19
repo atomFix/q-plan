@@ -1,34 +1,81 @@
 import { PlanResponse, RelationResponse, WorkPlan, EmployeePlan, DailyPlan, Task } from '../types';
-import { REAL_RELATION_DATA, REAL_PLAN_DATA } from './mockData';
 
 // Cache Configuration
 const CACHE_PREFIX = 'qodin_plan_cache_';
 const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
+const RELATION_CACHE_DURATION = 30 * 24 * 60 * 60 * 1000; // 30 days for org structure
 
 interface CacheItem {
     timestamp: number;
     data: PlanResponse;
 }
 
-// Simulate API delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+interface RelationCacheItem {
+    timestamp: number;
+    data: RelationResponse;
+}
 
-export const fetchRelation = async (path: string): Promise<RelationResponse> => {
-    // Org structure changes rarely, we can cache it longer or use same logic.
-    // For simplicity, sticking to memory cache or simple pass-through as per previous logic, 
-    // or adding simple local storage here too.
+export const fetchRelation = async (path: string, forceRefresh: boolean = false): Promise<RelationResponse> => {
     const cacheKey = `qodin_rel_cache_${path}`;
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-        try {
-            return JSON.parse(cached) as RelationResponse;
-        } catch(e) { console.error(e); }
+    const now = new Date();
+    const nowTime = now.getTime();
+
+    // Try to load from Cache first
+    if (!forceRefresh) {
+        const cachedStr = localStorage.getItem(cacheKey);
+        if (cachedStr) {
+            try {
+                const cached: RelationCacheItem = JSON.parse(cachedStr);
+                const cacheAge = nowTime - cached.timestamp;
+
+                // 30 days cache for org structure
+                if (cacheAge < RELATION_CACHE_DURATION) {
+                    console.log(`[Cache] Relation hit for ${path}, age: ${Math.round(cacheAge / (24 * 60 * 60 * 1000))} days`);
+                    return cached.data;
+                } else {
+                    console.log(`[Cache] Relation expired for ${path}`);
+                }
+            } catch (e) {
+                console.warn("[Cache] Relation parse error, refetching...", e);
+            }
+        }
     }
 
-    await delay(300); 
-    const data = REAL_RELATION_DATA.data;
-    localStorage.setItem(cacheKey, JSON.stringify(data));
-    return data as RelationResponse;
+    console.log(`[API] Fetching relation for ${path}...`);
+
+    try {
+        const apiUrl = `/qodin/api/relation/getRelation?path=${encodeURIComponent(path)}`;
+        const fetchResponse = await fetch(apiUrl);
+
+        if (!fetchResponse.ok) {
+            throw new Error(`Relation API request failed: ${fetchResponse.status}`);
+        }
+
+        const apiResponse = await fetchResponse.json();
+
+        if (apiResponse.status !== 0) {
+            throw new Error(`Relation API error: ${apiResponse.message}`);
+        }
+
+        const data = apiResponse.data as RelationResponse;
+
+        // Save to Cache
+        try {
+            const cacheItem: RelationCacheItem = {
+                timestamp: nowTime,
+                data: data
+            };
+            localStorage.setItem(cacheKey, JSON.stringify(cacheItem));
+            console.log(`[Cache] Relation saved for ${path}`);
+        } catch (e) {
+            console.error("Failed to save relation cache", e);
+        }
+
+        return data;
+    } catch (error) {
+        console.error(`[API] Failed to fetch relation for ${path}:`, error);
+        throw error;
+    }
 };
 
 export const fetchPlan = async (path: string, forceRefresh: boolean = false): Promise<PlanResponse> => {
@@ -44,10 +91,10 @@ export const fetchPlan = async (path: string, forceRefresh: boolean = false): Pr
             try {
                 const cached: CacheItem = JSON.parse(cachedStr);
                 const cacheTime = new Date(cached.timestamp);
-                
+
                 // Check 1: 7-day expiration
                 const isExpiredByDuration = (nowTime - cached.timestamp) > CACHE_DURATION;
-                
+
                 // Check 2: Thursday Rule
                 // If today is Thursday, and the cache was NOT created today, we consider it stale.
                 // We compare date strings to check if it's the same day.
@@ -72,61 +119,79 @@ export const fetchPlan = async (path: string, forceRefresh: boolean = false): Pr
     }
 
     console.log(`[API] Fetching plan for ${path}...`);
-    await delay(400);
-  
-    const rawData = REAL_PLAN_DATA.data;
 
-    // Transform raw data to internal structure
-    const employees: EmployeePlan[] = rawData.employees.map((emp: any) => {
-        const daily_plans: Record<string, DailyPlan> = {};
-        
-        emp.plans.forEach((p: any) => {
-            const tasks: Task[] = p.tasks.map((t: any) => ({
-                priority: t.priority,
-                task_id: t.name,
-                title: t.title,
-                type: t.issuetype,
-                work_hour: t.workhour,
-                status: t.job
-            }));
+    try {
+        // Build API URL with path parameter (using proxy)
+        const apiUrl = `/qodin/api/issue/getPlan?param=${encodeURIComponent(path)}&typew=&parent=1,2`;
+        const fetchResponse = await fetch(apiUrl);
 
-            daily_plans[p.date] = {
-                task_count: p.count,
-                tasks: tasks
+        if (!fetchResponse.ok) {
+            throw new Error(`API request failed: ${fetchResponse.status}`);
+        }
+
+        const apiResponse = await fetchResponse.json();
+
+        if (apiResponse.status !== 0) {
+            throw new Error(`API error: ${apiResponse.message}`);
+        }
+
+        const rawData = apiResponse.data;
+
+        // Transform raw data to internal structure
+        const employees: EmployeePlan[] = rawData.employees.map((emp: any) => {
+            const daily_plans: Record<string, DailyPlan> = {};
+
+            emp.plans.forEach((p: any) => {
+                const tasks: Task[] = p.tasks.map((t: any) => ({
+                    priority: t.priority,
+                    task_id: t.name,
+                    title: t.title,
+                    type: t.issuetype,
+                    work_hour: t.workhour,
+                    status: t.job
+                }));
+
+                daily_plans[p.date] = {
+                    task_count: p.count,
+                    tasks: tasks
+                };
+            });
+
+            return {
+                rtx_id: emp.rtx_id,
+                name: emp.name,
+                department: emp.department,
+                daily_plans: daily_plans
             };
         });
 
-        return {
-            rtx_id: emp.rtx_id,
-            name: emp.name,
-            department: emp.department,
-            daily_plans: daily_plans
+        const work_plan: WorkPlan = {
+            period: {
+                start_date: rawData.start_date,
+                end_date: rawData.end_date
+            },
+            employees: employees
         };
-    });
 
-    const work_plan: WorkPlan = {
-        period: {
-            start_date: rawData.start_date,
-            end_date: rawData.end_date
-        },
-        employees: employees
-    };
-
-    const response: PlanResponse = {
-        org_tree: {},
-        work_plan: work_plan
-    };
-  
-    // Save to Cache
-    try {
-        const cacheItem: CacheItem = {
-            timestamp: nowTime,
-            data: response
+        const planResponse: PlanResponse = {
+            org_tree: {},
+            work_plan: work_plan
         };
-        localStorage.setItem(cacheKey, JSON.stringify(cacheItem));
-    } catch (e) {
-        console.error("Failed to save cache", e);
+
+        // Save to Cache
+        try {
+            const cacheItem: CacheItem = {
+                timestamp: nowTime,
+                data: planResponse
+            };
+            localStorage.setItem(cacheKey, JSON.stringify(cacheItem));
+        } catch (e) {
+            console.error("Failed to save cache", e);
+        }
+
+        return planResponse;
+    } catch (error) {
+        console.error(`[API] Failed to fetch plan for ${path}:`, error);
+        throw error;
     }
-
-    return response;
 };

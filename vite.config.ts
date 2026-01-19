@@ -8,6 +8,14 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          '/qodin': {
+            target: 'https://qa.corp.qunar.com',
+            changeOrigin: true,
+            secure: false,
+            rewrite: (path) => path
+          }
+        }
       },
       plugins: [react()],
       define: {
