@@ -31,16 +31,20 @@ import { TaskCard } from './components/TaskCard';
 import { StatsPanel } from './components/StatsPanel';
 import { DailyTaskPopup } from './components/DailyTaskPopup';
 import { generateCenteredDateColumns, isToday, getTodayStr } from './utils/dateUtils';
-import { fetchPlan, fetchRelation } from './services/apiService';
+import { fetchPlan, fetchRelation, fetchPlanByParent } from './services/apiService';
 import { DateColumn, PlanResponse, RelationResponse, EmployeePlan, DailyPlan, Task } from './types';
 
 // Key for LocalStorage
 const STORAGE_USER_KEY = 'qodin_my_rtx';
 const STORAGE_USER_PATH_KEY = 'qodin_my_path';
-const STORAGE_LAST_PATH = 'qodin_last_path'; 
+const STORAGE_LAST_PATH = 'qodin_last_path';
+const STORAGE_FILTER_PRIORITY = 'qodin_filter_priority';
+const STORAGE_FILTER_STATUS = 'qodin_filter_status';
+const STORAGE_FILTER_PARENT = 'qodin_filter_parent';
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
-const STATUSES = ['coding', 'support', 'planning', 'review', 'done', '进行中', '未开始']; 
+const STATUSES = ['coding', 'support', 'planning', 'review', 'done', '进行中', '未开始'];
+const PARENT_FILTERS = ['1', '2']; // 1=父项目, 2=子项目 
 
 const RANGE_OPTIONS = [
     { label: '±3', value: 3 },
@@ -106,8 +110,18 @@ function App() {
   const [centerDate, setCenterDate] = useState<string>(getTodayStr());
   const [rangeOffset, setRangeOffset] = useState<number>(3); 
 
-  const [statusFilters, setStatusFilters] = useState<string[]>([]);
-  const [priorityFilters, setPriorityFilters] = useState<string[]>([]);
+  const [statusFilters, setStatusFilters] = useState<string[]>(() => {
+    const saved = localStorage.getItem(STORAGE_FILTER_STATUS);
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [priorityFilters, setPriorityFilters] = useState<string[]>(() => {
+    const saved = localStorage.getItem(STORAGE_FILTER_PRIORITY);
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [parentFilters, setParentFilters] = useState<string[]>(() => {
+    const saved = localStorage.getItem(STORAGE_FILTER_PARENT);
+    return saved ? JSON.parse(saved) : [];
+  });
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
@@ -275,6 +289,19 @@ function App() {
     };
   }, []);
 
+  // 6. Save filters to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_FILTER_PRIORITY, JSON.stringify(priorityFilters));
+  }, [priorityFilters]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_FILTER_STATUS, JSON.stringify(statusFilters));
+  }, [statusFilters]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_FILTER_PARENT, JSON.stringify(parentFilters));
+  }, [parentFilters]);
+
   const loadPlanData = async (forceRefresh: boolean = false) => {
     // Cancel any pending request
     if (planAbortControllerRef.current) {
@@ -289,10 +316,73 @@ function App() {
         setLoading(true);
     }
     try {
-      const data = await fetchPlan(selectedPath, forceRefresh, abortController.signal);
+      // Fetch only two data sets in parallel: parent and child projects
+      const [parentData, childData] = await Promise.all([
+        fetchPlanByParent(selectedPath, '1', forceRefresh, abortController.signal),
+        fetchPlanByParent(selectedPath, '2', forceRefresh, abortController.signal)
+      ]);
+
       // Only update state if this request wasn't aborted
       if (!abortController.signal.aborted) {
-        setPlanData(data);
+        // Merge parent and child data by combining employees
+        const mergedEmployeesMap = new Map<string, EmployeePlan>();
+
+        // Helper function to add or merge employee data
+        const mergeEmployee = (emp: EmployeePlan, parentType: '1' | '2') => {
+          const existing = mergedEmployeesMap.get(emp.rtx_id);
+          if (existing) {
+            // Merge daily plans
+            Object.entries(emp.daily_plans).forEach(([date, plan]) => {
+              if (!existing.daily_plans[date]) {
+                existing.daily_plans[date] = { task_count: 0, tasks: [] };
+              }
+              existing.daily_plans[date].task_count += plan.task_count;
+              // Add parent tag to tasks
+              const taggedTasks = plan.tasks.map(task => ({
+                ...task,
+                parent: parentType
+              }));
+              existing.daily_plans[date].tasks.push(...taggedTasks);
+            });
+          } else {
+            // Create new employee entry with parent-tagged tasks
+            const taggedPlans: Record<string, DailyPlan> = {};
+            Object.entries(emp.daily_plans).forEach(([date, plan]) => {
+              taggedPlans[date] = {
+                task_count: plan.task_count,
+                tasks: plan.tasks.map(task => ({
+                  ...task,
+                  parent: parentType
+                }))
+              };
+            });
+            mergedEmployeesMap.set(emp.rtx_id, {
+              rtx_id: emp.rtx_id,
+              name: emp.name,
+              department: emp.department,
+              daily_plans: taggedPlans
+            });
+          }
+        };
+
+        // Merge parent data
+        parentData.forEach(emp => mergeEmployee(emp, '1'));
+        // Merge child data
+        childData.forEach(emp => mergeEmployee(emp, '2'));
+
+        // Construct the merged PlanResponse
+        const mergedData: PlanResponse = {
+          org_tree: {},
+          work_plan: {
+            period: {
+              start_date: '',
+              end_date: ''
+            },
+            employees: Array.from(mergedEmployeesMap.values())
+          }
+        };
+
+        setPlanData(mergedData);
       }
     } catch (e: any) {
       // Ignore abort errors - they're expected when switching teams quickly
@@ -307,8 +397,9 @@ function App() {
     }
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = async (event?: React.MouseEvent) => {
       setRefreshing(true);
+      // Always force refresh when clicking the refresh button
       await loadPlanData(true);
       setRefreshing(false);
   };
@@ -387,6 +478,7 @@ function App() {
   const clearFilters = () => {
       setStatusFilters([]);
       setPriorityFilters([]);
+      setParentFilters([]);
   };
 
   const shiftDate = (direction: 'prev' | 'next') => {
@@ -457,12 +549,12 @@ function App() {
       }
 
       const lowerFilterText = filterText.toLowerCase().trim();
-      const hasTaskFilters = statusFilters.length > 0 || priorityFilters.length > 0;
+      const hasTaskFilters = statusFilters.length > 0 || priorityFilters.length > 0 || parentFilters.length > 0;
       const visibleDateKeys = dateColumns.map(d => d.dateStr);
 
       return emps.reduce((acc, emp) => {
-          const empMatchesSearch = !lowerFilterText || 
-                                   emp.name.toLowerCase().includes(lowerFilterText) || 
+          const empMatchesSearch = !lowerFilterText ||
+                                   emp.name.toLowerCase().includes(lowerFilterText) ||
                                    emp.rtx_id.toLowerCase().includes(lowerFilterText);
 
           const newDailyPlans: Record<string, DailyPlan> = {};
@@ -475,7 +567,9 @@ function App() {
               const visibleTasks = dayPlan.tasks.filter(t => {
                   const matchPriority = priorityFilters.length === 0 || priorityFilters.includes(t.priority);
                   const matchStatus = statusFilters.length === 0 || statusFilters.includes(t.status);
-                  if (!matchPriority || !matchStatus) return false;
+                  const matchParent = parentFilters.length === 0 || (t.parent && parentFilters.includes(t.parent));
+
+                  if (!matchPriority || !matchStatus || !matchParent) return false;
 
                   if (!lowerFilterText) return true;
                   if (empMatchesSearch) return true;
@@ -504,7 +598,7 @@ function App() {
           return acc;
       }, [] as EmployeePlan[]);
 
-  }, [planData, filterText, onlyMe, myRtxId, statusFilters, priorityFilters, dateColumns]);
+  }, [planData, filterText, onlyMe, myRtxId, statusFilters, priorityFilters, parentFilters, dateColumns]);
 
   const getMergedTasks = (emp: EmployeePlan, columns: DateColumn[]): MergedTaskBlock[] => {
       const merged: MergedTaskBlock[] = [];
@@ -567,7 +661,7 @@ function App() {
       return merged;
   };
 
-  const activeFilterCount = statusFilters.length + priorityFilters.length;
+  const activeFilterCount = statusFilters.length + priorityFilters.length + parentFilters.length;
   const period = planData?.work_plan?.period;
   const colPercent = 100 / dateColumns.length;
 
@@ -743,6 +837,7 @@ function App() {
                     onClick={handleRefresh}
                     disabled={refreshing}
                     className={`p-2 rounded-full transition-all hover:rotate-180 duration-500 flex-shrink-0 ${refreshing ? 'animate-spin text-violet-500' : ''} text-slate-500 dark:text-slate-400`}
+                    title="刷新数据"
                  >
                      <RefreshCw size={18} />
                  </button>
@@ -882,14 +977,17 @@ function App() {
                         {activeFilterCount > 0 && <span className="bg-white text-violet-600 rounded-full w-4 h-4 flex items-center justify-center text-[9px] font-extrabold lg:absolute lg:-top-1 lg:-right-1 lg:static shadow-sm">{activeFilterCount}</span>}
                     </button>
                     {isFilterOpen && filterPosition && createPortal(
-                         <div className="fixed w-72 lg:w-80 rounded-2xl shadow-2xl border z-[150] overflow-hidden animate-in fade-in zoom-in-95 duration-150 backdrop-blur-xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 border-slate-200 dark:border-slate-700"
-                         style={{ top: `${filterPosition.top}px`, left: `${filterPosition.left}px`, transform: 'translateX(-100%)' }}
+                         <div className="fixed w-80 sm:w-96 lg:w-[480px] rounded-2xl shadow-2xl border z-[150] overflow-hidden animate-in fade-in zoom-in-95 duration-150 backdrop-blur-xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 border-slate-200 dark:border-slate-700"
+                         style={{
+                           top: `${filterPosition.top}px`,
+                           right: '16px'
+                         }}
                          >
                             <div className="p-4 border-b flex justify-between items-center border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-white dark:from-slate-700/50 dark:to-slate-800/50">
                                 <span className="text-xs font-display font-bold uppercase tracking-widest opacity-60">Filter Tasks</span>
                                 <button onClick={clearFilters} className="text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline transition-opacity hover:opacity-80">Reset All</button>
                             </div>
-                            <div className="p-5 flex flex-col sm:flex-row gap-6">
+                            <div className="p-5 flex flex-col lg:flex-row gap-6">
                                 <div className="flex-1">
                                     <div className="text-xs font-bold opacity-60 mb-3 uppercase tracking-widest">Priority</div>
                                     {PRIORITIES.map(p => (
@@ -901,7 +999,7 @@ function App() {
                                         </div>
                                     ))}
                                 </div>
-                                <div className="w-[1px] hidden sm:block bg-slate-200 dark:bg-slate-700" />
+                                <div className="w-[1px] hidden lg:block bg-slate-200 dark:bg-slate-700" />
                                 <div className="flex-1">
                                     <div className="text-xs font-bold opacity-60 mb-3 uppercase tracking-widest">Status</div>
                                     {STATUSES.map(s => (
@@ -910,6 +1008,21 @@ function App() {
                                                 {statusFilters.includes(s) && <div className="w-2 h-2 bg-white rounded-[1px]" />}
                                             </div>
                                             <span className="text-sm font-medium truncate">{s}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="w-[1px] hidden lg:block bg-slate-200 dark:bg-slate-700" />
+                                <div className="flex-1">
+                                    <div className="text-xs font-bold opacity-60 mb-3 uppercase tracking-widest">Parent Type</div>
+                                    {[
+                                        { value: '1', label: '父项目 (Parent)' },
+                                        { value: '2', label: '子项目 (Child)' }
+                                    ].map(({ value, label }) => (
+                                        <div key={value} onClick={() => toggleFilter(parentFilters, value, setParentFilters)} className="flex items-center gap-3 mb-1.5 cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-all card-hover">
+                                            <div className={`w-4 h-4 rounded shadow-sm border flex items-center justify-center transition-all ${parentFilters.includes(value) ? 'bg-gradient-to-br from-violet-500 to-violet-600 border-violet-500 shadow-md shadow-violet-500/20' : 'border-slate-400 bg-transparent'}`}>
+                                                {parentFilters.includes(value) && <div className="w-2 h-2 bg-white rounded-[1px]" />}
+                                            </div>
+                                            <span className="text-sm font-medium">{label}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -923,9 +1036,9 @@ function App() {
 
         {/* Statistics - Stack on Mobile */}
         {planData && (
-            <div className="relative z-20 transition-colors duration-300 border-b bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 fade-in-up"
+            <div className="relative z-30 transition-colors duration-300 border-b bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 fade-in-up"
             >
-                 <StatsPanel employees={filteredEmployees} />
+                 <StatsPanel employees={filteredEmployees} loading={refreshing} />
             </div>
         )}
 
@@ -985,6 +1098,19 @@ function App() {
 
             {planData && (
                 <div className="flex-1 overflow-auto custom-scrollbar relative overscroll-contain bg-white dark:bg-slate-800">
+                    {/* Refresh Overlay */}
+                    {refreshing && (
+                        <div className="fixed inset-0 flex items-center justify-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm z-50 animate-in fade-in duration-300 overflow-hidden">
+                            <div className="text-center">
+                                <div className="relative mb-4">
+                                    <div className="absolute inset-0 rounded-full bg-gradient-to-r from-violet-500 to-violet-600 blur-xl opacity-20 animate-pulse"></div>
+                                    <Loader2 className="relative animate-spin text-transparent bg-clip-text bg-gradient-to-r from-violet-500 to-violet-600 mx-auto" size={48} />
+                                </div>
+                                <p className="text-sm font-display font-medium text-slate-600 dark:text-slate-300 tracking-wide">刷新数据中...</p>
+                            </div>
+                        </div>
+                    )}
+
                     <table className="w-full min-w-[800px] border-collapse table-fixed">
                         <thead className="sticky top-0 z-40 shadow-sm bg-white dark:bg-slate-800 border-b-2 border-slate-200 dark:border-slate-700"
                         >

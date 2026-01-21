@@ -6,9 +6,10 @@ import { BarChart, Bar, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface StatsPanelProps {
   employees: EmployeePlan[];
+  loading?: boolean;
 }
 
-export const StatsPanel: React.FC<StatsPanelProps> = ({ employees }) => {
+export const StatsPanel: React.FC<StatsPanelProps> = ({ employees, loading = false }) => {
   let totalTasks = 0;
   let totalHours = 0;
   let p1Count = 0;
@@ -41,6 +42,29 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ employees }) => {
     .sort((a, b) => b.tasks - a.tasks)
     .slice(0, 10);
 
+  // Skeleton component for loading state
+  const StatSkeleton = ({ delay = 0 }: { delay?: number }) => (
+    <div className={`flex items-center gap-3 sm:gap-4 px-4 sm:px-6 py-3 sm:py-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm animate-pulse`} style={{ animationDelay: `${delay}ms` }}>
+      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg bg-slate-200 dark:bg-slate-700 flex-shrink-0"></div>
+      <div className="flex flex-col flex-1">
+        <div className="h-3 sm:h-4 w-16 sm:w-20 bg-slate-200 dark:bg-slate-700 rounded mb-2"></div>
+        <div className="h-6 sm:h-7 w-24 sm:w-32 bg-slate-200 dark:bg-slate-700 rounded"></div>
+      </div>
+    </div>
+  );
+
+  const ChartSkeleton = () => (
+    <div className="flex-1 hidden md:flex flex-col rounded-xl border p-4 shadow-sm h-32 sm:h-auto bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 animate-pulse">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 bg-slate-200 dark:bg-slate-700 rounded"></div>
+          <div className="h-3 w-24 bg-slate-200 dark:bg-slate-700 rounded"></div>
+        </div>
+      </div>
+      <div className="flex-1 min-h-[60px] bg-slate-100 dark:bg-slate-700/50 rounded-lg"></div>
+    </div>
+  );
+
   const StatItem = ({ label, value, icon: Icon, delay = 0 }: any) => (
       <div className={`flex items-center gap-3 sm:gap-4 px-4 sm:px-6 py-3 sm:py-4 rounded-xl border bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 shadow-sm fade-in-up`} style={{ animationDelay: `${delay}ms` }}>
           <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center flex-shrink-0 bg-slate-50 dark:bg-slate-700">
@@ -57,60 +81,74 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ employees }) => {
     <div className="px-4 py-4 sm:px-6 sm:py-6 flex flex-col xl:flex-row gap-4 sm:gap-6">
         {/* Stats Row: Stack vertically on very small screens, 3 cols on tablet+ */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 flex-1 xl:max-w-4xl">
-            <StatItem
-                label="Total Tasks"
-                value={totalTasks}
-                icon={Briefcase}
-                delay={0}
-            />
-            <StatItem
-                label="Total Hours"
-                value={totalHours.toFixed(1)}
-                icon={Clock}
-                delay={100}
-            />
-            <StatItem
-                label="Critical P0/P1"
-                value={p1Count}
-                icon={Zap}
-                delay={200}
-            />
+            {loading ? (
+                <>
+                    <StatSkeleton delay={0} />
+                    <StatSkeleton delay={100} />
+                    <StatSkeleton delay={200} />
+                </>
+            ) : (
+                <>
+                    <StatItem
+                        label="Total Tasks"
+                        value={totalTasks}
+                        icon={Briefcase}
+                        delay={0}
+                    />
+                    <StatItem
+                        label="Total Hours"
+                        value={totalHours.toFixed(1)}
+                        icon={Clock}
+                        delay={100}
+                    />
+                    <StatItem
+                        label="Critical P0/P1"
+                        value={p1Count}
+                        icon={Zap}
+                        delay={200}
+                    />
+                </>
+            )}
         </div>
 
         {/* Chart Card - Hidden on very small screens if needed, or stacked */}
-        <div className="flex-1 hidden md:flex flex-col rounded-xl border p-4 shadow-sm h-32 sm:h-auto bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 fade-in-up" style={{ animationDelay: '300ms' }}>
-             <div className="flex items-center justify-between mb-2">
-                 <div className="flex items-center gap-2">
-                    <BarChart2 size={14} className="text-slate-500 dark:text-slate-400" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Workload Top 10</span>
+        {loading ? (
+            <ChartSkeleton />
+        ) : (
+            <div className="flex-1 hidden md:flex flex-col rounded-xl border p-4 shadow-sm h-32 sm:h-auto bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 fade-in-up" style={{ animationDelay: '300ms' }}>
+                 <div className="flex items-center justify-between mb-2">
+                     <div className="flex items-center gap-2">
+                        <BarChart2 size={14} className="text-slate-500 dark:text-slate-400" />
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Workload Top 10</span>
+                     </div>
                  </div>
-             </div>
-             <div className="flex-1 min-h-[60px]">
-                <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} barGap={4}>
-                        <Tooltip
-                            contentStyle={{
-                                fontSize: '11px',
-                                padding: '6px 12px',
-                                borderRadius: '8px',
-                                border: '1px solid #e2e8f0',
-                                background: '#ffffff',
-                                color: '#1e293b',
-                                boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
-                            }}
-                            cursor={{fill: '#f1f5f9'}}
-                        />
-                        <Bar
-                            dataKey="tasks"
-                            fill="#3b82f6"
-                            radius={[4, 4, 4, 4]}
-                            barSize={18}
-                            fillOpacity={0.9}
-                        />
-                    </BarChart>
-                </ResponsiveContainer>
-             </div>
-        </div>
+                 <div className="flex-1 min-h-[60px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={chartData} barGap={4}>
+                            <Tooltip
+                                contentStyle={{
+                                    fontSize: '11px',
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #e2e8f0',
+                                    background: '#ffffff',
+                                    color: '#1e293b',
+                                    boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+                                }}
+                                cursor={{fill: '#f1f5f9'}}
+                            />
+                            <Bar
+                                dataKey="tasks"
+                                fill="#3b82f6"
+                                radius={[4, 4, 4, 4]}
+                                barSize={18}
+                                fillOpacity={0.9}
+                            />
+                        </BarChart>
+                    </ResponsiveContainer>
+                 </div>
+            </div>
+        )}
     </div>
   );
 };

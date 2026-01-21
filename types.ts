@@ -22,6 +22,7 @@ export interface Task {
   type: string; // e.g., "子项目管理", "产品需求"
   work_hour: string;
   status: string; // e.g., "support", "coding"
+  parent?: '1' | '2' | null; // 1=父项目, 2=子项目, null=未知
 }
 
 export interface DailyPlan {
